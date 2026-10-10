@@ -17,7 +17,7 @@ st.title("Deepfake Detection AI 🔍")
 st.markdown("Upload any media file below to verify its authenticity using our advanced AI models.")
 st.divider()
 
-BACKEND_URL = "https://mdds-backend-tkbc.onrender.com/upload"  # Backend API endpoint
+BACKEND_URL = BACKEND_URL = "[https://mdds-backend-tkbc.onrender.com/upload/](https://mdds-backend-tkbc.onrender.com/upload/)"  # Backend API endpoint
 
 # 🗂️ Layout ko 2 hisson (Columns) mein divide karna
 col1, col2 = st.columns([1, 1.2], gap="large")
