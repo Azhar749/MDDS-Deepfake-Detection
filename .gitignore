@@ -1,0 +1,4 @@
+__pycache__/
+deepfake_backend/uploads/
+deepfake_backend/heatmaps/
+.env
