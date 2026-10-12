@@ -2,7 +2,6 @@ import streamlit as st
 import requests
 import base64
 
-# Dhyan rahe, yeh link exactly wahi hai jo aapne fix kiya tha
 BACKEND_URL = "https://mdds-backend-tkbc.onrender.com/upload/"
 
 st.title("MDDS - Deepfake Detection System")
@@ -23,14 +22,20 @@ if uploaded_file is not None:
                     result = response.json()
                     st.success("Analysis Complete!")
                     
-                    # AI Results Dikhana
-                    st.subheader(f"Prediction: **{result['status']}**")
-                    st.write(f"Confidence: **{result['confidence']}**")
+                    # Result Dikhana
+                    st.subheader(f"Prediction: **{result.get('status', 'N/A')}**")
+                    st.write(f"Confidence: **{result.get('confidence', 'N/A')}**")
                     
-                    # Heatmap Dikhana (Base64 ko wapas image mein badal kar)
-                    heatmap_b64 = result['heatmap_image'].split(",")[1]
-                    heatmap_bytes = base64.b64decode(heatmap_b64)
-                    st.image(heatmap_bytes, caption="AI Analysis Heatmap (Red areas show focus)", use_container_width=True)
+                    # Heatmap Dikhana (Fix ke sath)
+                    if "heatmap_image" in result:
+                        heatmap_data = result["heatmap_image"]
+                        if "," in heatmap_data:
+                            heatmap_data = heatmap_data.split(",")[1]
+                        
+                        image_bytes = base64.b64decode(heatmap_data)
+                        st.image(image_bytes, caption="AI Analysis Heatmap (Red areas show focus)", use_container_width=True)
+                    else:
+                        st.error("Heatmap data nahi mila!")
                 else:
                     st.error("Server mein koi masla aaya hai. Please try again.")
             except Exception as e:
