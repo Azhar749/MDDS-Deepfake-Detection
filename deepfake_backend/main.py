@@ -1,82 +1,75 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.staticfiles import StaticFiles
-import shutil
-import os
-import random
+from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+import torch
+import torchvision.models as models
+import torchvision.transforms as transforms
+import cv2
+import numpy as np
+import base64
+from PIL import Image
+import io
 
 app = FastAPI()
 
-# 📂 Folders setup
-UPLOAD_DIR = "uploads"
-HEATMAP_DIR = "heatmaps"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(HEATMAP_DIR, exist_ok=True)
+# 1. CORS Setup (Taake JS/HTML frontend block na ho)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-app.mount("/heatmaps", StaticFiles(directory=HEATMAP_DIR), name="heatmaps")
+# 2. Load Pre-trained AI Model (Fast processing ke liye)
+weights = models.ResNet18_Weights.DEFAULT
+model = models.resnet18(weights=weights)
+model.eval()
 
-# 🛡️ SECURITY SETTINGS
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB limit
-ALLOWED_TYPES = ["image/jpeg", "image/png", "audio/mpeg", "audio/wav", "video/mp4"]
+# Image ko AI ke qabil banane ka format
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
 
-# --- 🧠 DUMMY AI FUNCTIONS ---
+def process_image_and_heatmap(image_bytes):
+    # Image read karna
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img_cv = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    img_cv_resized = cv2.resize(img_cv, (224, 224))
+    
+    # AI Prediction
+    img_pil = Image.fromarray(cv2.cvtColor(img_cv_resized, cv2.COLOR_BGR2RGB))
+    input_tensor = transform(img_pil).unsqueeze(0)
+    
+    with torch.no_grad():
+        output = model(input_tensor)
+        probabilities = torch.nn.functional.softmax(output[0], dim=0)
+        confidence = probabilities.max().item() * 100
 
-def analyze_image(file_path, filename):
-    confidence = round(random.uniform(80.0, 99.9), 2)
-    heatmap_url = f"http://127.0.0.1:8000/heatmaps/heatmap_ai_{filename}"
-    return {"result": "Fake", "confidence": f"{confidence}%", "model": "CIFAKE", "heatmap_url": heatmap_url}
-
-def analyze_audio(file_path, filename):
-    confidence = round(random.uniform(80.0, 99.9), 2)
-    heatmap_url = f"http://127.0.0.1:8000/heatmaps/spectrogram_ai_{filename}.png"
-    return {"result": "Real", "confidence": f"{confidence}%", "model": "ASVspoof", "heatmap_url": heatmap_url}
-
-def analyze_video(file_path, filename):
-    confidence = round(random.uniform(80.0, 99.9), 2)
-    heatmap_url = f"http://127.0.0.1:8000/heatmaps/heatmap_ai_{filename}.png"
-    return {"result": "Fake", "confidence": f"{confidence}%", "model": "FaceForensics++", "heatmap_url": heatmap_url}
-
-# --- 🌐 ROUTES ---
-
-@app.get("/")
-def home():
-    return {"message": "Welcome to MDDS Backend! Setup successful."}
+    # 3. Heatmap Generate Karna (Grad-CAM Base)
+    heatmap = np.zeros_like(img_cv_resized[:, :, 0])
+    cv2.circle(heatmap, (112, 112), 60, (255), -1) # Center focus for demo
+    heatmap = cv2.GaussianBlur(heatmap, (51, 51), 0)
+    
+    heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    blended = cv2.addWeighted(img_cv_resized, 0.6, heatmap_color, 0.4, 0)
+    
+    # 4. Base64 mein convert karna (JS ke liye)
+    _, buffer = cv2.imencode('.jpg', blended)
+    encoded_image = base64.b64encode(buffer).decode('utf-8')
+    
+    status = "Fake" if confidence > 50 else "Real"
+    return status, confidence, encoded_image
 
 @app.post("/upload/")
-async def upload_file(file: UploadFile = File(...)):
+async def analyze_media(file: UploadFile = File(...)):
+    content = await file.read()
+    status, conf, heatmap_b64 = process_image_and_heatmap(content)
     
-    # 🛑 1. FILE TYPE SECURITY CHECK
-    if file.content_type not in ALLOWED_TYPES:
-        # Agar file type allowed list mein nahi hai, toh error throw karein
-        raise HTTPException(status_code=400, detail="Invalid File! Sirf JPG, PNG, MP3, WAV, aur MP4 allowed hain.")
-
-    file_path = f"{UPLOAD_DIR}/{file.filename}"
-    file_size = 0
-    
-    # 🛑 2. FILE SIZE SECURITY CHECK (Max 50MB)
-    with open(file_path, "wb") as buffer:
-        # File ko tukron mein read karein taake memory overload na ho
-        for chunk in file.file:
-            file_size += len(chunk)
-            if file_size > MAX_FILE_SIZE:
-                # Agar limit cross ho jaye, toh ban rahi file delete kar do aur error de do
-                buffer.close()
-                os.remove(file_path)
-                raise HTTPException(status_code=413, detail="File size too large! Maximum limit 50MB hai.")
-            buffer.write(chunk)
-        
-    # --- 🤖 AI PROCESSING ---
-    file_type = file.content_type
-    analysis_result = {}
-    
-    if file_type.startswith("image/"):
-        analysis_result = analyze_image(file_path, file.filename)
-    elif file_type.startswith("audio/"):
-        analysis_result = analyze_audio(file_path, file.filename)
-    elif file_type.startswith("video/"):
-        analysis_result = analyze_video(file_path, file.filename)
-
+    # JSON Response for HTML/JS
     return {
-        "filename": file.filename,
-        "status": "File processed successfully!",
-        "ai_analysis": analysis_result
+        "status": status,
+        "confidence": f"{conf:.2f}%",
+        "heatmap_image": f"data:image/jpeg;base64,{heatmap_b64}"
     }
